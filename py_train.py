@@ -1,33 +1,34 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[ ]:
+# In[1]:
 
 
 import tensorflow as tf
 tf.enable_eager_execution()
 
 
-# In[ ]:
+# In[2]:
 
 
 PARAMS = {
-    "rnn_units": 256,
+    "rnn_units": 512,
     "rnn_type": "LSTM",
     "tokenizer": "BERT",
     "word_embedding": "BERT",
-    "vocab_size": 5000,
+    "vocab_size": 3000,
     "combine_strategy": "merge",
     "combine_layer": "concat",
     "image_context_size": 256,
     "word_embedding_dim": 256,
-    "batch_size": 64,
-    "data_size": "all",
+    "batch_size": 32,
+    "data_size": 30000,
     "use_mapping": True,
+    "learning_rate": 0.001,
 }
 
 
-# In[ ]:
+# In[3]:
 
 
 import numpy as np
@@ -43,13 +44,13 @@ import matplotlib.pyplot as plt
 from sklearn.utils import shuffle
 
 
-# In[ ]:
+# In[4]:
 
 
 import keras as K
 
 
-# In[ ]:
+# In[5]:
 
 
 config = tf.compat.v1.ConfigProto()
@@ -57,14 +58,14 @@ config.gpu_options.allow_growth=True
 session = tf.compat.v1.Session(config=config)
 
 
-# In[ ]:
+# In[6]:
 
 
 annotation_folder = '../Dataset/MSCOCO/annotations/'
 image_folder = '../Dataset/MSCOCO/train2014/'
 
 
-# In[ ]:
+# In[7]:
 
 
 import os
@@ -72,7 +73,7 @@ os.environ['http_proxy']="http://jessin:77332066@cache.itb.ac.id:8080"
 os.environ['https_proxy']="https://jessin:77332066@cache.itb.ac.id:8080"
 
 
-# In[ ]:
+# In[8]:
 
 
 annotation_file = annotation_folder + 'captions_train2014.json'
@@ -82,7 +83,7 @@ with open(annotation_file, 'r') as f:
     annotations = json.load(f)
 
 
-# In[ ]:
+# In[9]:
 
 
 # Store captions and image names
@@ -105,14 +106,14 @@ train_captions = all_captions[:stopper]
 train_img_paths = all_img_paths[:stopper]
 
 
-# In[ ]:
+# In[10]:
 
 
 print("len train_captions :", len(train_img_paths))
 print("len all_captions :", len(all_img_paths))
 
 
-# In[ ]:
+# In[11]:
 
 
 DATA_SIZE = len(train_captions) if PARAMS["data_size"] == "all" else PARAMS["data_size"]
@@ -120,7 +121,7 @@ DATA_SIZE = len(train_captions) if PARAMS["data_size"] == "all" else PARAMS["dat
 
 # ## Image feature extractor
 
-# In[ ]:
+# In[12]:
 
 
 def get_image_feature_extractor(model_type="xception"):
@@ -145,7 +146,7 @@ def get_image_feature_extractor(model_type="xception"):
     return encoder, encoder_preprocessor
 
 
-# In[ ]:
+# In[13]:
 
 
 MODEL_TYPE = "xception"
@@ -155,7 +156,7 @@ MODEL_TYPE = "xception"
 extractor, extractor_preprocessor = get_image_feature_extractor(MODEL_TYPE)
 
 
-# In[ ]:
+# In[14]:
 
 
 IMAGE_SIZE = (299, 299)
@@ -173,7 +174,7 @@ def load_image(image_path):
 
 # ## Prepare Image dataset
 
-# In[ ]:
+# In[15]:
 
 
 BATCH_SIZE = PARAMS["batch_size"]
@@ -188,14 +189,14 @@ image_dataset = image_dataset.map(load_image, num_parallel_calls=tf.data.experim
 image_dataset = image_dataset.batch(BATCH_SIZE)
 
 
-# In[ ]:
+# In[16]:
 
 
 estimated_batch_count = DATA_SIZE / BATCH_SIZE + 1
 print("estimated_batch_count", estimated_batch_count)
 
 
-# In[ ]:
+# In[17]:
 
 
 # # Preprocessed image (batch)
@@ -219,7 +220,7 @@ print("estimated_batch_count", estimated_batch_count)
 
 # ## Prepare Tokenizer
 
-# In[ ]:
+# In[18]:
 
 
 import torch
@@ -227,14 +228,14 @@ from pytorch_pretrained_bert import BertTokenizer, BertModel
 from keras.preprocessing.text import Tokenizer
 
 
-# In[ ]:
+# In[19]:
 
 
 TOKENIZER = PARAMS["tokenizer"]
 VOCAB_SIZE = PARAMS["vocab_size"]  # Choose the top-n words from the vocabulary
 
 
-# In[ ]:
+# In[20]:
 
 
 class BertTokenizerWrapper(BertTokenizer):
@@ -315,13 +316,15 @@ class BertTokenizerWrapper(BertTokenizer):
         self.bert_id_to_custom_id = {0:0}
         self.custom_id_to_bert_id = {0:0}
         
+        actual_vocab_size = self.vocab_size - 1 # idx 0 for padding & unknown
+        
         sorted_occurence = {k: v for k, v in sorted(
             self.occurence_table.items(), reverse=True, key=lambda item: item[1]
         )}
         
-        used_tokens = sorted(list(sorted_occurence)[:self.vocab_size])
+        used_tokens = sorted(list(sorted_occurence)[:actual_vocab_size])
         
-        for i in range(0, min(len(used_tokens), self.vocab_size)):
+        for i in range(0, min(len(used_tokens), actual_vocab_size)):
             bert_token = used_tokens[i]
             self.bert_id_to_custom_id[bert_token] = i + 1    # 0 for padding
             self.custom_id_to_bert_id[i + 1] = bert_token    # 0 for padding
@@ -333,7 +336,7 @@ class BertTokenizerWrapper(BertTokenizer):
         ))
         
         sorted_occurence_count = list(sorted_occurence.values())
-        used_tokens_count = sum(sorted_occurence_count[:self.vocab_size])
+        used_tokens_count = sum(sorted_occurence_count[:actual_vocab_size])
         total_tokens_count = sum(sorted_occurence_count)
         
         print("Using {0} / {1} tokens available ({2:.2f} %)".format(
@@ -353,7 +356,7 @@ class BertTokenizerWrapper(BertTokenizer):
         return token_ids
 
 
-# In[ ]:
+# In[21]:
 
 
 class TokenizerWrapper(Tokenizer):
@@ -362,7 +365,7 @@ class TokenizerWrapper(Tokenizer):
         return [self.word_index[x] for x in tokens]
 
 
-# In[ ]:
+# In[22]:
 
 
 def get_tokenizer():
@@ -387,7 +390,7 @@ def get_tokenizer():
     return tokenizer
 
 
-# In[ ]:
+# In[23]:
 
 
 tokenizer = get_tokenizer()
@@ -396,13 +399,13 @@ train_captions = tokenizer.texts_to_sequences(train_captions)
 
 # ## Pad sequence
 
-# In[ ]:
+# In[24]:
 
 
 from keras.preprocessing.sequence import pad_sequences
 
 
-# In[ ]:
+# In[25]:
 
 
 MAX_LENGTH = None  # use <int> or None
@@ -414,7 +417,7 @@ train_captions = pad_sequences(train_captions, maxlen=MAX_LENGTH, padding='post'
 
 # ## Create dataset object
 
-# In[ ]:
+# In[26]:
 
 
 # Load the numpy files
@@ -424,7 +427,7 @@ def load_image_npy(img_name, cap):
     return img_tensor, cap
 
 
-# In[ ]:
+# In[27]:
 
 
 # Create dataset object
@@ -432,7 +435,7 @@ def load_image_npy(img_name, cap):
 dataset = tf.data.Dataset.from_tensor_slices((train_img_paths, train_captions))
 
 
-# In[ ]:
+# In[28]:
 
 
 # Use map to load the numpy files in parallel
@@ -443,7 +446,7 @@ dataset = dataset.map(lambda item1, item2: tf.numpy_function(
           num_parallel_calls=tf.data.experimental.AUTOTUNE)
 
 
-# In[ ]:
+# In[29]:
 
 
 # Shuffle and batch
@@ -454,7 +457,7 @@ dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
 # ## Split train eval test
 
-# In[ ]:
+# In[30]:
 
 
 # Split dataset 
@@ -480,7 +483,7 @@ test_dataset = dataset.skip(n_train + n_eval)
 # """
 
 
-# In[ ]:
+# In[31]:
 
 
 print("train: {} batches, (total : {})".format(n_train, n_train * BATCH_SIZE))
@@ -494,7 +497,7 @@ print("test : {} batches, (total : {} (aprx))".format(n_test, n_test * BATCH_SIZ
 
 # ## Encoder
 
-# In[ ]:
+# In[32]:
 
 
 from tensorflow.keras.layers import Dense
@@ -521,7 +524,7 @@ class CNN_Encoder(tf.keras.Model):
 
 # ## CNN Attention
 
-# In[ ]:
+# In[33]:
 
 
 from tensorflow.keras.layers import Dense
@@ -565,14 +568,14 @@ class BahdanauAttention(tf.keras.Model):
         """
 
 
-# In[ ]:
+# In[34]:
 
 
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import SparseCategoricalCrossentropy
 
 
-optimizer = Adam()
+optimizer = Adam(learning_rate=PARAMS["learning_rate"])
 loss_object = SparseCategoricalCrossentropy(from_logits=True, reduction='none')
 
 
@@ -608,7 +611,7 @@ def loss_function(real, pred):
 
 # ## Decoder
 
-# In[ ]:
+# In[35]:
 
 
 from tensorflow.keras.layers import Dense, Embedding, LSTM, GRU
@@ -829,13 +832,13 @@ class RNN_Decoder(tf.keras.Model):
 
 # ## Define model
 
-# In[ ]:
+# In[36]:
 
 
 PARAMS
 
 
-# In[ ]:
+# In[37]:
 
 
 encoder = CNN_Encoder(
@@ -867,7 +870,7 @@ decoder = RNN_Decoder(
 # """
 
 
-# In[ ]:
+# In[38]:
 
 
 # Default feed forward function
@@ -919,7 +922,7 @@ def feed_forward(img_tensor, target):
     """
 
 
-# In[ ]:
+# In[39]:
 
 
 # @tf.function
@@ -944,7 +947,7 @@ def eval_step(img_tensor, target):
     return loss, total_loss
 
 
-# In[ ]:
+# In[40]:
 
 
 def choose_predicted_id(predictions, strategy="max", sampling_k=10):
@@ -980,7 +983,7 @@ def choose_predicted_id(predictions, strategy="max", sampling_k=10):
 
 # ### Support using image
 
-# In[ ]:
+# In[41]:
 
 
 MAX_CAPTION_LENGTH = 25
@@ -1043,7 +1046,7 @@ def get_supporting_features(images_paths, strategy="mean"):
 
 # ### Support using text
 
-# In[ ]:
+# In[42]:
 
 
 def get_one_hot_indices(support_text):
@@ -1052,7 +1055,9 @@ def get_one_hot_indices(support_text):
     for i in range(0, len(support_text)):
         context_token = tokenizer.tokenize(support_text[i])
         context_token_id = tokenizer.convert_tokens_to_ids(context_token)
-        for x in sorted(set(context_token_id)):
+        context_token_id = set(context_token_id)
+        context_token_id.discard(0)
+        for x in sorted(context_token_id):
             indices.append([i, x])
     
     # return => (word_count, 2)
@@ -1075,7 +1080,7 @@ def get_supporting_text_vector(support_text, vocab_size):
     return sparse_one_hot
 
 
-# In[ ]:
+# In[43]:
 
 
 def custom_evaluate(images_paths,
@@ -1152,8 +1157,6 @@ def custom_evaluate(images_paths,
                 context_vector, attention_weights = attention(features, hidden)
                 context_vector = tf.expand_dims(context_vector, 1)  
                 
-#                 context_vector += curr_pertubation
-                
                 predictions, hidden = decoder(decoder_input, context_vector, iteration=i)
                 pplm_loss = pplm_loss_function(support_text_vector, predictions, pplm_weight=pplm_weight)
 
@@ -1196,7 +1199,7 @@ def custom_evaluate(images_paths,
     return result, attention_plot
 
 
-# In[ ]:
+# In[44]:
 
 
 from tensorflow.keras.losses import CategoricalCrossentropy, SparseCategoricalCrossentropy, MeanSquaredError
@@ -1224,7 +1227,16 @@ def pplm_loss_function(real, pred, pplm_weight=0.03):
     """
 
 
+# !git add "Keras.ipynb"
+# !git commit -m "add top k vocab"
+
 # ## Setup training
+
+# In[ ]:
+
+
+# ! rm -rf checkpoints
+
 
 # In[ ]:
 
@@ -1296,15 +1308,17 @@ for epoch in range(start_epoch, EPOCHS):
         total_loss += t_loss
 
         if batch % 50 == 0:
-            
             log_message = '{} Epoch {} Batch {} Loss {:.4f}'.format(
-                checkpoint_path, epoch + 1, batch, batch_loss.numpy() / int(target.shape[1]))
+                checkpoint_path, epoch + 1, batch, batch_loss.numpy())
             
             print (log_message)   
             log_file.write(str(log_message + "\n"))
-            
+                
         batch += 1
         
+        # storing the epoch end loss value to plot later
+        loss_plot.append(batch_loss)
+
     ckpt_manager.save()
 
     print ('Epoch {} Loss {:.6f}'.format(epoch + 1, total_loss))
@@ -1319,3 +1333,207 @@ plt.xlabel('Epochs')
 plt.ylabel('Loss')
 plt.title('Loss Plot')
 plt.show()
+
+
+# ## Test Train
+
+# In[ ]:
+
+
+# for (batch, (img_tensor, target)) in tqdm(enumerate(train_dataset)):
+
+#     batch_loss, t_loss = train_step(img_tensor, target)
+
+
+# ## Test predict
+
+# In[ ]:
+
+
+# images = all_img_paths[:4]
+
+# result, attention_plot = custom_evaluate(images)
+# result
+
+
+# ## Test PPLM
+
+# In[ ]:
+
+
+# images = all_img_paths[:4]
+# text = [
+#     "butter cream cheese blue cheese cottage cheese goats cheese crème fraîche eggs free range eggs margarine milk full-fat milk semi-skimmed milk skimmed milk sour cream yoghurt",
+#     "butter cream cheese blue cheese cottage cheese goats cheese crème fraîche eggs free range eggs margarine milk full-fat milk semi-skimmed milk skimmed milk sour cream yoghurt",
+#     "butter cream cheese blue cheese cottage cheese goats cheese crème fraîche eggs free range eggs margarine milk full-fat milk semi-skimmed milk skimmed milk sour cream yoghurt",
+#     "butter cream cheese blue cheese cottage cheese goats cheese crème fraîche eggs free range eggs margarine milk full-fat milk semi-skimmed milk skimmed milk sour cream yoghurt",
+# ]
+
+# result, attention_plot = custom_evaluate(images, support_text=text, pplm_iteration=5, pplm_weight=1)
+# result
+
+
+# ## Frozen
+
+# In[ ]:
+
+
+# MAX_CAPTION_LENGTH = 25
+# ATTENTION_SHAPE = 10 * 10 # 100 for xception, 64 for Inception
+
+
+# def get_image_features(images_paths):
+#     """
+#     images_paths => (batch_size, 1)
+#     """
+    
+#     # Extract images features
+#     images = [load_image(x)[0] for x in images_paths]
+    
+#     # x => (batch_size, 299, 299, 3)
+#     x = tf.convert_to_tensor(images)
+    
+#     # x => (batch_size, 10, 10, 2048)
+#     x = extractor(x)
+    
+#     # x  => (batch_size, img_feature_size, 2048)
+#     x = tf.reshape(x, (x.shape[0], -1, x.shape[3]))
+    
+#     # features => (batch_size, img_feature_size, image_context_size)
+#     features = encoder(x)
+    
+#     return features
+
+
+# def get_supporting_features(images_paths, strategy="mean"):
+#     """
+#     images_paths => (batch_size, img_count, 1)
+#     strategy : strategy to aggregate multiple supporting image ["logsumexp", "mean", "min", "max"]
+#     """
+    
+#     # Extract images features
+#     images = [[load_image(x)[0] for x in images_set] for images_set in images_paths]
+    
+#     # x => (batch_size, img_count, 299, 299, 3)
+#     x = tf.convert_to_tensor(images)
+    
+#     # x => (batch_size, img_count, 10, 10, 2048)
+#     x = [extractor(image_set) for image_set in x]
+    
+#     # features => (batch_size, img_count, img_feature_size, image_context_size)
+#     features = encoder(x)
+    
+#     # features => (batch_size, img_feature_size, image_context_size)
+#     if strategy == "logsumexp":
+#         features = tf.reduce_logsumexp(features, 1)
+#     elif strategy == "max":
+#         features = tf.reduce_max(features, 1)
+#     elif strategy == "min":
+#         features = tf.reduce_min(features, 1)
+#     else:
+#         features = tf.reduce_mean(features, 1)
+
+#     return features
+    
+
+# def custom_evaluate(images_paths,
+#                     support_imgs=None, 
+#                     support_aggregate_strategy="mean"):
+#     """
+#     images_paths : list of image_path         => (batch_size, 1)
+#     support_imgs : list of list of image_path => (batch_size, image_count, 1)
+#     support_aggregate_strategy : how to aggregate support image ["logsumexp", "mean", "min", "max"]
+#     """
+    
+#     batch_size = len(images_paths)
+#     attention_plot = np.zeros((batch_size, MAX_CAPTION_LENGTH, ATTENTION_SHAPE))
+
+#     # Extract features from main images
+#     # features => (batch_size, img_feature_size, img_context_size)
+#     features = get_image_features(images_paths)
+
+    
+#     # Extract aggregated features from support images
+#     if support_imgs is not None:
+#         # supporting_features => (batch_size, img_feature_size, img_context_size)
+#         supporting_features = get_supporting_features(support_imgs, strategy=support_aggregate_strategy)
+
+    
+#     # initialize the hidden state for decoder
+#     hidden = decoder.reset_state(batch_size=batch_size)
+    
+#     # initialize start token for decoder input
+#     start_token = tokenizer.convert_tokens_to_ids(['start'])
+#     decoder_input = tf.tile(tf.expand_dims(start_token, 1), [batch_size, 1])
+    
+#     # initialize result container
+#     result = [[]] * batch_size
+    
+
+#     for i in range(MAX_CAPTION_LENGTH):
+        
+#         # Getting image feature / context_vector from attention model
+#         # context_vector => (batch_size, image_context_size)
+#         context_vector, attention_weights = attention(features, hidden)
+        
+#         # context_vector => (batch_size, 1, image_context_size)
+#         context_vector = tf.expand_dims(context_vector, 1)     
+        
+
+#         if support_imgs is not None:
+#             # support_context_vector => (batch_size, 1, image_context_size)
+#             support_context_vector, support_attention_weights = attention(supporting_features, hidden)
+        
+#         """
+#         HOW TO USE CONTEXT VECTOR ? 
+#         """
+        
+
+#         # Passing the features through the decoder
+#         predictions, hidden = decoder(decoder_input, context_vector, iteration=i)
+        
+#         """
+#         1. ADJUST CONTEXT VECTOR, (ORIGINAL + SOMETHING(SUPPORT VECTOR))
+        
+#         OR
+        
+#         ADJUST HIDDEN STATE USED TO GENERATE TEXT ???
+        
+#         """
+        
+        
+#         """
+#         ## TODO : apply PPLM here
+#         ## check loss (prediction - context vector of supporting images)
+#         ## apply gradient : hidden_state += diffrence(pred, supporting img vectors) (after n-iteration)
+#         ## re compute predictions
+        
+#         ## not the right loss (?) use PPLM ??
+#         # loss => Tensor("add:0", shape=(), dtype=float32)
+#         # loss += loss_function(target[:, i], predictions)
+#         # use supporting_features here
+#         ## =========================================
+#         """
+        
+
+        
+#         # predicted_ids => (batch_size, 1)
+#         predicted_ids = choose_predicted_id(predictions, strategy="sampling")
+        
+#         # revert back id to token, and append into result
+#         predicted_tokens = [tokenizer.convert_ids_to_tokens(x) for x in predicted_ids]
+#         result = np.hstack([result, predicted_tokens])
+
+#         # assign attention weights to respective generated word
+#         # attention_plot => (batch_size, max_caption_len, feature_size)
+#         attention_plot[:, i] = tf.squeeze(attention_weights)
+
+#         # use last generated word as next decoder input
+#         # decoder_input => (batch_size, 1)
+#         decoder_input = predicted_ids
+        
+
+#     # slice attention to match result len
+#     attention_plot = attention_plot[:, :len(result[0]), :]
+    
+#     return result, attention_plot
