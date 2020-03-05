@@ -23,6 +23,7 @@ PARAMS = {
     "learning_rate": 0.001,
     "max_caption_length": 25, # use <int> or None
     "image_feature_extractor": "xception",
+    "use_sequence": True,
     "epoch": 20,
 }
 
@@ -280,6 +281,7 @@ VOCAB_SIZE = PARAMS["vocab_size"]  # Choose the top-n words from the vocabulary
 
 # In[25]:
 
+
 class BertTokenizerWrapper(BertTokenizer):
     
     def use_custom_mapping(self, use_mapping=True, vocab_size=3000):
@@ -303,8 +305,8 @@ class BertTokenizerWrapper(BertTokenizer):
         
         if not self.mapping_initialized:
             self._initialize_custom_mapping(bert_ids)
-            return [self._convert_bert_id_to_custom_id(x) for x in tqdm(bert_ids)]
-        
+            return [self._convert_bert_id_to_custom_id(x) for x in bert_ids]
+    
         return bert_ids
     
         
@@ -351,58 +353,50 @@ class BertTokenizerWrapper(BertTokenizer):
                 
     
     def _build_custom_mapping_table(self):
+            
+        self.bert_id_to_custom_id = {0:0}
+        self.custom_id_to_bert_id = {0:0}
         
-        _special_token = ['[UNK]', '[PAD]']
-        _actual_vocab_size = self.cust_vocab_size - len(_special_token)
+        actual_vocab_size = self.cust_vocab_size - 1 # idx 0 for padding & unknown
         
         sorted_occurence = {k: v for k, v in sorted(
             self.occurence_table.items(), reverse=True, key=lambda item: item[1]
         )}
         
-        used_tokens = sorted(list(sorted_occurence)[:_actual_vocab_size])
-        mapping_size = min(len(used_tokens), _actual_vocab_size)
+        used_tokens = sorted(list(sorted_occurence)[:actual_vocab_size])
         
-        _bert_pad = 0
-        _bert_oov = 100
-        self._custom_pad = 0
-        self._custom_oov = mapping_size + 1
-        
-        self.bert_id_to_custom_id = {
-            _bert_pad: self._custom_pad, 
-            _bert_oov: self._custom_oov
-        }
-        self.custom_id_to_bert_id = {
-            self._custom_pad: _bert_pad, 
-            self._custom_oov: _bert_oov
-        }
-        
-        for i in range(0, mapping_size):
+        for i in range(0, min(len(used_tokens), actual_vocab_size)):
             bert_token = used_tokens[i]
-            self.bert_id_to_custom_id[bert_token] = i + 1    
-            self.custom_id_to_bert_id[i + 1] = bert_token
+            self.bert_id_to_custom_id[bert_token] = i + 1    # 0 for padding
+            self.custom_id_to_bert_id[i + 1] = bert_token    # 0 for padding
             
         print("Vocab contains {0} / {1} unique tokens ({2:.2f} %)".format(
-            len(used_tokens) + 2,\
+            len(used_tokens),\
             len(sorted_occurence),\
             (len(used_tokens) / len(sorted_occurence) * 100)
         ))
         
         sorted_occurence_count = list(sorted_occurence.values())
-        used_tokens_count = sum(sorted_occurence_count[:_actual_vocab_size])
+        used_tokens_count = sum(sorted_occurence_count[:actual_vocab_size])
         total_tokens_count = sum(sorted_occurence_count)
         
         print("Using {0} / {1} tokens available ({2:.2f} %)".format(
             used_tokens_count,\
             total_tokens_count,\
             (used_tokens_count / total_tokens_count * 100)
-        ))        
+        ))
         
     def _convert_bert_id_to_custom_id(self, token_ids):
-        return [self.bert_id_to_custom_id[x] if x in self.bert_id_to_custom_id else self._custom_oov for x in token_ids]
-    
-    def _convert_custom_id_to_bert_id(self, token_ids):
-        return [self.custom_id_to_bert_id[x] for x in token_ids]
-    
+        
+        token_ids = [self.bert_id_to_custom_id[x] if x in self.bert_id_to_custom_id else 0 for x in token_ids]
+        return token_ids
+                    
+    def _convert_custom_id_to_bert_id(self, token_ids):  
+        
+        token_ids = [self.custom_id_to_bert_id[x] for x in token_ids]
+        return token_ids
+
+
 # In[26]:
 
 
@@ -706,7 +700,6 @@ class BahdanauAttention(tf.keras.Model):
 
 # In[43]:
 
-
 from tensorflow.keras.layers import Dense, Embedding, LSTM, GRU
 from transformers import TFBertModel
 
@@ -771,11 +764,13 @@ class RNN_Decoder(tf.keras.Model):
         
         if self.rnn_type == "LSTM":
             self.lstm = LSTM(self.rnn_units,
-                         return_state=True,
-                         recurrent_initializer='glorot_uniform')
+                             return_sequences=True,
+                             return_state=True,
+                             recurrent_initializer='glorot_uniform')
         
         elif self.rnn_type == "GRU":
             self.gru = GRU(self.rnn_units,
+                        return_sequences=True,
                            return_state=True,
                            recurrent_initializer='glorot_uniform')
         else:
@@ -849,13 +844,26 @@ class RNN_Decoder(tf.keras.Model):
 #             output, state = self.rnn_model(x)  
             
         if self.combine_strategy == "inject_par":
+            
+            context_vector = tf.expand_dims(context_vector, 1)
+            context_vector = tf.tile(context_vector, [1, MAX_CAPTION_LENGTH, 1])
+                        
             x = self.custom_combine_layer(context_vector, x)
+            
+            # output => (batch_size, sequence_len, rnn_unit)
             output, state = self.rnn_model(x)              
-
+            
         else: # merge (as default)
+            
+            # output => (batch_size, sequence_len, rnn_unit)
             output, state = self.rnn_model(x)           
+            
+            context_vector = tf.expand_dims(context_vector, 1)
+            context_vector = tf.tile(context_vector, [1, MAX_CAPTION_LENGTH, 1])
+            
+            # output => (batch_size, rnn_unit)
             output = self.custom_combine_layer(context_vector, output)
-        
+            
         return output, state
     
     
@@ -920,12 +928,15 @@ class RNN_Decoder(tf.keras.Model):
         ## ============================================
         ## TODO: add another attention layer ? 
         ## ============================================
-            
-        # x3 shape => (batch_size, rnn_units)
-        x3 = self.fc1(x2)
+        
+        # x3 => (batch_size, sequence_len, rnn_units)
+        x3 = self.fc1(x2)   # how important is every sequence 
+        
+        # x4 => (batch_size, sequence_len * rnn_units)
+        x4 = tf.reshape(x3, (x3.shape[0], -1))
 
         # word_predictions => (batch_size, vocab)
-        word_predictions = self.fc2(x3)
+        word_predictions = self.fc2(x4)
         
         return word_predictions, rnn_state
     
@@ -936,7 +947,6 @@ class RNN_Decoder(tf.keras.Model):
             return tf.zeros((batch_size, self.rnn_units))
         
         return tf.zeros((self.batch_size, self.rnn_units))        
-
 
 # ## Define model
 
