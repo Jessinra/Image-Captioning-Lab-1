@@ -18,13 +18,15 @@ PARAMS = {
     "image_context_size": 256,
     "word_embedding_dim": 256,
     "batch_size": 32,
-    "data_size": "all",
+    "data_size": 30000,
     "use_mapping": True,
     "learning_rate": 0.001,
     "max_caption_length": 25, # use <int> or None
     "image_feature_extractor": "xception",
     "use_sequence": True,
     "epoch": 20,
+    "version": "v3 : sequence",
+    "note": "using softmax",
 }
 
 
@@ -1355,7 +1357,7 @@ ckpt = tf.train.Checkpoint(encoder=encoder,
                            attention=attention,
                            optimizer=optimizer
                           )
-ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep=50)
+ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep=2)
 
 
 # In[ ]:
